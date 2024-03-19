@@ -1,0 +1,149 @@
+﻿Program.Sub.Preflight.Start
+V.Global.bConOpen.Declare(Boolean, False)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+	F.Intrinsic.Control.SelectCase(V.Caller.Hook)
+		F.Intrinsic.Control.Case("29850")
+			'Check that prospect was selected on screen 
+			'Passed 000029: TYPE-COMBO-BOX
+			F.Intrinsic.Control.If(V.Passed.000029.Trim, <>, "Prospect")
+				F.Intrinsic.Control.End
+			F.Intrinsic.Control.EndIf
+			F.Intrinsic.Control.CallSub(getUsers)
+	F.Intrinsic.Control.EndSelect
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.ErrorMsg.Start
+V.Local.sError.Declare
+
+F.Intrinsic.Control.If(V.Global.bConOpen)
+	F.ODBC.Connection!con.Close
+F.Intrinsic.Control.EndIf
+
+'Generic Error message.
+F.Intrinsic.String.Build("Project GCG_6587_Prospect_Email.g2u {0}{0}Subroutine: {1}{0}Error: {2} with Description: {3}", v.Ambient.NewLine, v.Args.CurrentSub, v.Ambient.ErrorNumber, v.Ambient.ErrorDescription, v.Local.sError)
+F.Intrinsic.UI.Msgbox(v.Local.sError)
+Program.Sub.ErrorMsg.End
+
+Program.Sub.getUsers.Start
+F.Intrinsic.Control.Try
+	V.Local.sUsers.Declare
+	V.Local.sSecurityGroup.Declare
+	V.Local.sRet.Declare
+	V.Local.bGroupFound.Declare
+	V.Local.sMsg.Declare
+	
+	
+	V.Local.sSecurityGroup.Set("PA")
+
+	F.Global.Security.GetGroupMembers(V.Local.sSecurityGroup, V.Caller.CompanyCode, V.Local.sUsers)
+	F.Intrinsic.Control.If(V.Local.sUsers, =, "")
+		F.Intrinsic.String.Build("Group {0} does not exist, or no members are in it. Please set this up and add users that should receive prospect emails.", V.Local.sSecurityGroup, V.Local.sMsg)
+		F.Intrinsic.UI.Msgbox(V.Local.sMsg, "Security Group Not Set up")
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	
+	'F.Intrinsic.String.Split(V.Local.sUsers, "*!*", V.Local.sUsers)
+	
+	F.Intrinsic.Control.CallSub(createSendEmail, Users, V.Local.sUsers)
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.EndTry
+Program.Sub.getUsers.End
+
+Program.Sub.createSendEmail.Start
+F.Intrinsic.Control.Try
+	V.Local.sUsersFullName.Declare
+	V.Local.sUsers.Declare
+	V.Local.sUsersSQL.Declare
+	V.Local.sUserEmails.Declare
+	V.Local.sRecipientNameEmail.Declare
+	V.Local.i.Declare
+	V.Local.sSQL.Declare
+	V.Local.iReturnCode.Declare
+	V.Local.sRet.Declare
+	V.Local.sMsg.Declare
+	V.Local.sUserID.Declare
+	
+	V.Local.sUsers.Set(V.Args.Users)
+	F.Intrinsic.String.Split(V.Local.sUsers, "*!*", V.Local.sUsers)
+	
+	'Check Courier 2 is Running
+	F.Global.Messaging.IsCourierRunning(V.Local.iReturnCode)
+	F.Intrinsic.Control.If(V.Local.iReturnCode, <>, 2)
+		F.Intrinsic.UI.Msgbox("Courier 2 is not running. Please start up this service and try saving again to properly send out prospect emails", "Courier Not Running")
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	
+	'Get their emails. 
+	F.Intrinsic.Control.For(V.Local.i, 0, V.Local.sUsers.UBound, 1)
+		F.Global.Security.GetUserEmail(V.Local.sUsers(V.Local.i), V.Caller.CompanyCode, V.Local.sRet)
+		F.Intrinsic.Control.If(V.Local.i, =, 0)
+			V.Local.sUserEmails.Set(V.Local.sRet)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Concat(V.Local.sUserEmails, "*!*", V.Local.sRet, V.Local.sUserEmails)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Next(V.Local.i)
+	F.Intrinsic.String.Split(V.Local.sUserEmails, "*!*", V.Local.sUserEmails)
+	
+	'Get users' first and last names. First format list of users for query
+	F.Intrinsic.String.Join(V.Local.sUsers, ", ", V.Local.sUsersSQL)
+	F.Intrinsic.String.Replace(V.Local.sUsersSQL, ",", "',", V.Local.sUsersSQL)
+	F.Intrinsic.String.Replace(V.Local.sUsersSQL, " ", " '", V.Local.sUsersSQL)
+	F.Intrinsic.String.Build("'{0}'", V.Local.sUsersSQL, V.Local.sUsersSQL)
+	
+	F.Intrinsic.String.Build("select FIRST_NAME + ' ' + LAST_NAME as NAME from USER_INFORMATION where GS_USER in ({0})", V.Local.sUsersSQL, V.Local.sSQL)
+	F.ODBC.Connection!con.OpenCommonConnection
+	V.Global.bConOpen.Set(True)
+	F.ODBC.Connection!con.ExecuteAndReturn(V.Local.sSQL, V.Local.sUsersFullName)
+	F.ODBC.Connection!con.Close
+	V.Global.bConOpen.Set(False)
+	F.Intrinsic.String.Replace(V.Local.sUsersFullName, "*!*", "", V.Local.sUsersFullName)
+	F.Intrinsic.String.Split(V.Local.sUsersFullName, "#$#", V.Local.sUsersFullName)
+	
+	'Ensure one name for each email 
+	F.Intrinsic.Control.If(V.Local.sUserEmails.UBound, <>, V.Local.sUsersFullName.UBound)
+		F.Intrinsic.UI.Msgbox("User full names count does not match email count", "Name and Email Count disrepancy")
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	
+	'Combine Name and emails to one delimited string (Name*!*Email@!@Name*!*Email etc)
+	F.Intrinsic.Control.For(V.Local.i, 0, V.Local.sUserEmails.UBound, 1)
+		F.Intrinsic.Control.If(V.Local.i, =, 0)
+			F.Intrinsic.String.Concat(V.Local.sUsersFullName(V.Local.i), "*!*", V.Local.sUserEmails(V.Local.i), V.Local.sRecipientNameEmail)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Concat(V.Local.sRecipientNameEmail, "@!@", V.Local.sUsersFullName(V.Local.i), "*!*", V.Local.sUserEmails(V.Local.i), V.Local.sRecipientNameEmail)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Next(V.Local.i)
+	
+	'Build message body 
+	'Passed 000005: B2-NAME or prospect Name 
+	F.Intrinsic.String.Build("Prospect {0} has been created by {1}. Please follow up to gather any additional information required to set them up as a Customer.", V.Passed.000005.Trim, V.Caller.User.Trim, V.Local.sMsg)
+	
+	'Send email 
+	F.Intrinsic.String.Build("select USER_ID from USER_INFORMATION where GS_USER = '{0}'", V.Caller.User, V.Local.sSQL)
+	F.ODBC.Connection!con.OpenCommonConnection
+	V.Global.bConOpen.Set(True)
+	F.ODBC.Connection!con.ExecuteAndReturn(V.Local.sSQL, V.Local.sUserID)
+	F.ODBC.Connection!con.Close
+	V.Global.bConOpen.Set(False)
+	
+	F.Global.Messaging.QueueMessage(V.Caller.CompanyCode, V.Local.sUserID, "GCG_6587_Prospect_Email", "New Prospect Has Been Created - GSS", , V.Local.sRecipientNameEmail, V.Local.sMsg)
+	
+	F.Intrinsic.UI.Msgbox("Email has been queued to be sent via courier to all members in the Production Administration Security Group", "Email Successfully Queued")
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+F.Intrinsic.Control.EndTry
+Program.Sub.createSendEmail.End
+
+Program.Sub.Comments.Start
+${$5$}$3.0.0.0$}$1
+${$6$}$bmedina$}$20220217103541191$}$kOipCrsyLBVj2KoSwkcdK23ChxGVcBlEsO23xXkrXwg6iHc/YvJuGfchQSRFIoszDw8IE947ONQ=
+Program.Sub.Comments.End
